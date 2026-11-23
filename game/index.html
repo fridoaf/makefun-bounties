@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solara Bay — Open-World Crime Game</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #10131c; color: #e8e8e8;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1280px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; color: #ffd23e; letter-spacing: 1px; }
+  p { margin: 4px 0 12px; color: #b8bcc8; font-size: 14px; }
+  canvas { display: block; width: 100%; max-width: 1280px; aspect-ratio: 16 / 9;
+    background: #0a0d16; border-radius: 8px; }
+  .keys { font-size: 13px; color: #9aa0ae; line-height: 1.7; }
+  .keys b { color: #e8e8e8; }
+</style>
+</head>
+<body>
+<main>
+  <h1>SOLARA BAY</h1>
+  <p>Kota pesisir fiktif. Mara Voss, kurir yang terjebak utang pada sindikat Dario Kess,
+     harus menyelesaikan 5 misi untuk lunas — sambil kabur dari polisi Bay Precinct.
+     Game orisinal: bukan GTA, bukan Rockstar.</p>
+  <canvas id="game" width="1280" height="720"></canvas>
+  <p class="keys">
+    <b>WASD / Panah</b> bergerak &amp; mengemudi &nbsp;·&nbsp; <b>Shift</b> lari &nbsp;·&nbsp;
+    <b>E</b> masuk / keluar mobil &nbsp;·&nbsp; <b>F</b> interaksi / mulai misi &nbsp;·&nbsp;
+    <b>Space</b> pukul / rem tangan &nbsp;·&nbsp; <b>M</b> mute &nbsp;·&nbsp; <b>Esc</b> jeda
+  </p>
+</main>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
