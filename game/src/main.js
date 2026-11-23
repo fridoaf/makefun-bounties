@@ -255,8 +255,6 @@ function update(dt) {
   for (const n of game.notifications) n.t -= dt;
   game.notifications = game.notifications.filter((n) => n.t > 0);
 
-  handlePressed();
-
   game.player.update(dt, game.keys, game);
   game.crashWantedCd = Math.max(0, (game.crashWantedCd || 0) - dt);
   game.traffic.update(dt, game);
@@ -285,6 +283,18 @@ function update(dt) {
           game.combat.burst(pv.x, pv.y, '#ffb040', 8, 140);
           game.police.addWanted(1, 'tabrakan', game);
         }
+      }
+    }
+    // A ramming patrol car stays on the player's bumper instead of driving
+    // through the car and parking on top of it (the ram in police.js still
+    // triggers at < 52, so the chase is unchanged — only the visual stack).
+    for (const c of game.police.cars) {
+      const d = dist(pv.x, pv.y, c.veh.x, c.veh.y);
+      if (d > 0.01 && d < 46) {
+        const a = Math.atan2(c.veh.y - pv.y, c.veh.x - pv.x);
+        const push = 46 - d;
+        c.veh.x += Math.cos(a) * push;
+        c.veh.y += Math.sin(a) * push;
       }
     }
     // Running over a pedestrian is a crime, and the crowd reacts.
@@ -366,6 +376,15 @@ let last = performance.now();
 function frame(now) {
   const dt = clamp((now - last) / 1000, 0, 0.05);
   last = now;
+  // Input is read once per frame, BEFORE the state dispatch, so keys work
+  // in every state — title, paused, busted/wasted/won — not just `playing`.
+  // update() used to be the only caller and it only runs while playing, and
+  // `pressed` is cleared at the end of every frame, so every non-playing
+  // branch of handlePressed() was dead code (Enter on the title screen and
+  // Esc/Enter to resume from pause never fired). Called here exactly once
+  // per frame, so a single press can never double-fire (e.g. E entering
+  // and immediately exiting a car in the same frame).
+  handlePressed();
   if (game.state === 'playing') update(dt);
   else if (game.state === 'title') {
     // Slow cinematic pan behind the title screen.
@@ -435,13 +454,21 @@ function stageShot(name) {
     dbg.setTime(0.52);
     dbg.setWanted(3);
     // Pull two patrol cars in close behind the player so they are in frame.
+    // Different lanes, angles, speeds and pursuit offsets, so the chase
+    // holds formation instead of the two cars stacking on one point.
+    const lanes = [
+      { x: 2260, y: 130, angle: Math.PI - 0.08, speed: 280, ox: 40, oy: -70 },
+      { x: 2420, y: 280, angle: Math.PI + 0.08, speed: 250, ox: 40, oy: 70 },
+    ];
     for (let i = 0; i < 2; i++) {
       game.police.spawnCar(game);
       const pc = game.police.cars[game.police.cars.length - 1];
-      pc.veh.x = 2250 + i * 90;
-      pc.veh.y = 200 + (i === 0 ? -30 : 40);
-      pc.veh.angle = Math.PI;
-      pc.veh.speed = 280;
+      pc.veh.x = lanes[i].x;
+      pc.veh.y = lanes[i].y;
+      pc.veh.angle = lanes[i].angle;
+      pc.veh.speed = lanes[i].speed;
+      pc.ox = lanes[i].ox;
+      pc.oy = lanes[i].oy;
     }
     game.missions.start(1, game);
   } else if (name === 'drive') {
@@ -475,6 +502,10 @@ function stageShot(name) {
     pc.veh.y = 1640;
     pc.veh.angle = Math.PI;
     pc.veh.speed = 220;
+    // Hold the north lane so this staged car does not stack onto the
+    // second patrol car the chase loop spawns (both steer at the player).
+    pc.ox = 40;
+    pc.oy = -70;
   }
   window.__shotReady = true;
 }

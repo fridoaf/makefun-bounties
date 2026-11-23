@@ -21,6 +21,31 @@ function panel(ctx, x, y, w, h) {
   ctx.stroke();
 }
 
+// Greedy word wrap for the current ctx.font: returns lines that each fit
+// maxWidth. A single over-long word is hard-split so nothing can overflow.
+function wrapLines(ctx, text, maxWidth) {
+  const lines = [];
+  let cur = '';
+  const pushWord = (w) => {
+    // Hard-split one over-long word into fitting chunks.
+    while (ctx.measureText(w).width > maxWidth) {
+      let cut = w.length - 1;
+      while (cut > 1 && ctx.measureText(w.slice(0, cut)).width > maxWidth) cut--;
+      if (cur) { lines.push(cur); cur = ''; }
+      lines.push(w.slice(0, cut));
+      w = w.slice(cut);
+    }
+    const t = cur ? cur + ' ' + w : w;
+    if (ctx.measureText(t).width <= maxWidth) cur = t;
+    else { if (cur) lines.push(cur); cur = w; }
+  };
+  for (const word of String(text).split(/\s+/)) {
+    if (word) pushWord(word);
+  }
+  if (cur) lines.push(cur);
+  return lines.length ? lines : [''];
+}
+
 function bar(ctx, x, y, w, h, frac, color, bg = 'rgba(0,0,0,0.55)') {
   ctx.fillStyle = bg;
   ctx.beginPath();
@@ -229,17 +254,25 @@ export function drawHUD(ctx, game) {
     ctx.fillText('Misi ' + (game.missions.idx + 1) + '/5 — ' + m.name + '   •   Paket: ' + game.missions.packagesFound + '/8', 26, CFG.VIEW_H - 34);
   }
 
-  // Dialog lines above the objective panel.
+  // Dialog lines above the objective panel. Each entry gets a panel that
+  // grows with its word-wrapped text (speaker on its own line), so long
+  // lines wrap instead of being cut off at the right edge.
   let dy = CFG.VIEW_H - 108;
+  ctx.textAlign = 'left';
   for (const line of game.missions.dialog.slice(-2)) {
-    panel(ctx, 14, dy - 34, 560, 34);
+    ctx.font = '13px sans-serif';
+    const tlines = wrapLines(ctx, line.text, 560 - 28);
+    const shown = tlines.slice(0, 3);
+    if (tlines.length > 3) shown[2] = shown[2].replace(/\s*\S*$/, '…');
+    const h = 22 + shown.length * 17 + 8;
+    panel(ctx, 14, dy - h, 560, h);
     ctx.fillStyle = '#ffd23e';
     ctx.font = 'bold 12px sans-serif';
-    ctx.fillText(line.speaker, 26, dy - 12);
+    ctx.fillText(line.speaker, 26, dy - h + 17);
     ctx.fillStyle = '#ffffff';
     ctx.font = '13px sans-serif';
-    ctx.fillText(line.text.slice(0, 78), 96, dy - 12);
-    dy -= 40;
+    shown.forEach((t, i) => ctx.fillText(t, 26, dy - h + 17 + 18 + i * 17));
+    dy -= h + 6;
   }
 
   // Notifications, top centre.

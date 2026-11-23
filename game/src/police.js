@@ -47,7 +47,9 @@ export class Police {
     );
     const angle = spot.axis === 'h' ? 0 : Math.PI / 2;
     const car = new Vehicle('police', spot.x, spot.y, angle, { owner: 'police' });
-    this.cars.push({ veh: car, stuck: 0 });
+    // ox/oy: pursuit offset from the player — cars with different offsets
+    // hold different lanes instead of all piling onto one point.
+    this.cars.push({ veh: car, stuck: 0, ox: 0, oy: 0 });
   }
 
   spawnOfficer(game) {
@@ -87,13 +89,18 @@ export class Police {
       this.quiet = 0;
     }
 
-    // Chase cars: steer at the player, ram on contact.
+    // Chase cars: steer at the player (plus this car's pursuit offset, so
+    // patrols hold different lanes instead of stacking on one point),
+    // ram on contact.
     for (const c of this.cars) {
       const v = c.veh;
-      const want = Math.atan2(pp.y - v.y, pp.x - v.x);
+      const tx = pp.x + (c.ox || 0);
+      const ty = pp.y + (c.oy || 0);
+      const want = Math.atan2(ty - v.y, tx - v.x);
       const steer = clamp(angDiff(v.angle, want) * 1.6, -1, 1);
       const d = dist(v.x, v.y, pp.x, pp.y);
-      v.update(dt, { throttle: d > 46 ? 1 : 0.4, steer, brake: false }, game.tod);
+      const dtgt = dist(v.x, v.y, tx, ty);
+      v.update(dt, { throttle: dtgt > 46 ? 1 : 0.4, steer, brake: false }, game.tod);
       if (d < 52) {
         if (player.vehicle) {
           player.vehicle.speed *= 0.82;
