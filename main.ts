@@ -1,6 +1,7 @@
 import{readdirSync as R,readFileSync as F,mkdirSync as K,writeFileSync as W}from"node:fs";
 import{join as J}from"node:path";
 function V(p:Uint8Array,q:Uint8Array){
+ const Y=[0,0,0,1,1,2,2,3],Z=[0,1,1,0,2,2,3,3];
  const D=new Int32Array(256),C=new Int32Array(64),M=new Int32Array(256),O=new Uint8Array(65536);
  let s=0,c=0,o=0,i=0,x=0,t=0,n=p.length;
  const T=(e:number)=>({o:O.slice(0,o),e});
@@ -8,7 +9,7 @@ function V(p:Uint8Array,q:Uint8Array){
   if(t===1e6)return T(10);
   if(x<0||x>=n)return T(9);
   const a=p[x];let g=0,y=0,z=0;
-  if(a<8){g=a==1?1:a==2?4:0;y=[0,0,0,1,1,2,2,3][a];z=[0,1,1,0,2,2,3,3][a]}
+  if(a<8){g=a==1?1:a==2?4:0;y=Y[a];z=Z[a]}
   else if(a<0x10)return T(5);
   else if(a<0x23){y=2;z=1;if(a==0x17||a==0x1b)y=1}
   else if(a<0x30)return T(5);
