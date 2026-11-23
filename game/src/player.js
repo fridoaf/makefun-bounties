@@ -1,146 +1,144 @@
-// Solara Bay — Mara Voss, on foot and behind the wheel.
-// Owns walking, getting in and out of cars, health, and the player drawing.
+// Mara Voss on foot: walking, running, punching, and getting in and out of
+// cars. The player is a circle with a facing; the car she drives lives in
+// vehicles.js and she just points at it while she is inside.
 
-import { CFG } from './config.js';
+import { PLAYER } from './config.js';
 import { clamp } from './utils.js';
-import { isSolid } from './city.js';
+import { collideCircle } from './city.js';
 
-export class Player {
-  constructor(x, y) {
-    this.x = x;
-    this.y = y;
-    this.dir = -Math.PI / 2;
-    this.hp = CFG.PLAYER_HP;
-    this.armor = 0;
-    this.money = 0;
-    this.onFoot = true;
-    this.vehicle = null;
-    this.speed = 0;
-    this.punchCd = 0;
-    this.hurtCd = 0;
-    this.moving = false;
+export function createPlayer(x, y) {
+  return {
+    x,
+    y,
+    angle: -Math.PI / 2,
+    hp: PLAYER.maxHp,
+    inCar: null,
+    punchCooldown: 0,
+    punchAnim: 0,
+    hurtFlash: 0,
+    walkPhase: 0,
+    moving: false,
+  };
+}
+
+/** Step Mara on foot. Returns 'punched' on the frame she swings. */
+export function updatePlayerOnFoot(game, input, dt) {
+  const p = game.player;
+  const axis = input.walkAxis();
+  const running = input.is('run');
+  const speed = running ? PLAYER.runSpeed : PLAYER.walkSpeed;
+  p.moving = axis.x !== 0 || axis.y !== 0;
+  if (p.moving) {
+    p.angle = Math.atan2(axis.y, axis.x);
+    p.walkPhase += dt * (running ? 13 : 9);
+    p.x += axis.x * speed * dt;
+    p.y += axis.y * speed * dt;
+  }
+  p.x = clamp(p.x, 16, 2560 - 16);
+  p.y = clamp(p.y, 16, 1920 - 16);
+  const push = collideCircle(game.city, p.x, p.y, PLAYER.radius);
+  if (push.hit) {
+    p.x += push.x;
+    p.y += push.y;
+  }
+  if (p.punchCooldown > 0) p.punchCooldown -= dt;
+  if (p.punchAnim > 0) p.punchAnim -= dt;
+  if (p.hurtFlash > 0) p.hurtFlash -= dt;
+
+  // Slow health regen when the heat is off.
+  if (game.wanted === 0 && p.hp < PLAYER.maxHp) {
+    p.hp = Math.min(PLAYER.maxHp, p.hp + PLAYER.hpRegen * dt);
   }
 
-  get pos() {
-    return this.vehicle ? { x: this.vehicle.x, y: this.vehicle.y } : { x: this.x, y: this.y };
+  // Punch: a swing in front of her, on a cooldown.
+  if (input.wasPressed('punch') && p.punchCooldown <= 0) {
+    p.punchCooldown = PLAYER.punchCooldown;
+    p.punchAnim = 0.22;
+    return 'punched';
   }
+  return null;
+}
 
-  update(dt, keys, game) {
-    this.punchCd = Math.max(0, this.punchCd - dt);
-    this.hurtCd = Math.max(0, this.hurtCd - dt);
-    if (!this.onFoot && this.vehicle) {
-      // Driving: the car does the physics, Mara just rides along.
-      const throttle = (keys.w || keys.up ? 1 : 0) - (keys.s || keys.down ? 1 : 0);
-      const steer = (keys.a || keys.left ? -1 : 0) + (keys.d || keys.right ? 1 : 0);
-      this.vehicle.update(dt, { throttle, steer, brake: !!keys.space }, game.tod);
-      this.x = this.vehicle.x;
-      this.y = this.vehicle.y;
-      this.dir = this.vehicle.angle;
-      this.speed = Math.abs(this.vehicle.speed);
-      this.moving = this.speed > 5;
-      return;
-    }
-    // On foot: 8-way movement, buildings block each axis separately so
-    // Mara slides along walls instead of sticking to them.
-    let ix = (keys.d || keys.right ? 1 : 0) - (keys.a || keys.left ? 1 : 0);
-    let iy = (keys.s || keys.down ? 1 : 0) - (keys.w || keys.up ? 1 : 0);
-    const len = Math.hypot(ix, iy);
-    this.moving = len > 0;
-    if (len > 0) {
-      ix /= len;
-      iy /= len;
-      this.dir = Math.atan2(iy, ix);
-      const spd = keys.shift ? CFG.RUN_SPEED : CFG.WALK_SPEED;
-      this.speed = spd;
-      const nx = this.x + ix * spd * dt;
-      const ny = this.y + iy * spd * dt;
-      if (!isSolid(nx, this.y, 14)) this.x = nx;
-      if (!isSolid(this.x, ny, 14)) this.y = ny;
-      this.x = clamp(this.x, 16, CFG.WORLD_W - 16);
-      this.y = clamp(this.y, 16, CFG.WORLD_H - 16);
-    } else {
-      this.speed = 0;
-    }
-  }
-
-  enterVehicle(v) {
-    this.vehicle = v;
-    this.onFoot = false;
-    v.owner = 'player';
-    this.x = v.x;
-    this.y = v.y;
-  }
-
-  exitVehicle(game) {
-    if (!this.vehicle) return;
-    const v = this.vehicle;
-    // Step out on the car's left side; fall back to the right if blocked.
-    const bx = v.x - Math.sin(v.angle) * 34;
-    const by = v.y + Math.cos(v.angle) * 34;
-    this.vehicle = null;
-    this.onFoot = true;
-    this.x = isSolid(bx, by, 14) ? v.x + Math.sin(v.angle) * 34 : bx;
-    this.y = isSolid(bx, by, 14) ? v.y - Math.cos(v.angle) * 34 : by;
-    this.speed = 0;
-    if (game) game.audio.sfx('door');
-  }
-
-  damage(n, game) {
-    if (this.hurtCd > 0) return;
-    this.hurtCd = 0.45;
-    let left = n;
-    if (this.armor > 0) {
-      const absorbed = Math.min(this.armor, left);
-      this.armor -= absorbed;
-      left -= absorbed;
-    }
-    this.hp -= left;
-    if (game) {
-      game.combat.burst(this.x, this.y, '#ff5040', 10);
-      game.audio.sfx('hurt');
-      if (this.hp <= 0) {
-        this.hp = 0;
-        game.wasted();
-      }
+/** The nearest car Mara can reach from where she stands, or null. */
+export function nearestCar(game, maxDist = 78) {
+  const p = game.player;
+  let best = null;
+  let bestD = maxDist;
+  for (const car of game.cars) {
+    const d = Math.hypot(car.x - p.x, car.y - p.y);
+    if (d < bestD) {
+      bestD = d;
+      best = car;
     }
   }
+  return best;
+}
 
-  heal(n) {
-    this.hp = Math.min(CFG.PLAYER_HP, this.hp + n);
+/** Step into a car: Mara hides inside it and the car takes her inputs. */
+export function enterCar(game, car) {
+  const p = game.player;
+  p.inCar = car;
+  car.parked = false;
+  car.npc = false;
+  car.route = null;
+  p.x = car.x;
+  p.y = car.y;
+}
+
+/** Step out: Mara appears beside the car and it rolls to a stop. */
+export function exitCar(game) {
+  const p = game.player;
+  const car = p.inCar;
+  if (!car) return;
+  p.inCar = null;
+  const side = car.angle + Math.PI / 2;
+  p.x = car.x + Math.cos(side) * 34;
+  p.y = car.y + Math.sin(side) * 34;
+  p.angle = car.angle;
+  car.speed = 0;
+  const push = collideCircle(game.city, p.x, p.y, PLAYER.radius);
+  if (push.hit) {
+    p.x += push.x;
+    p.y += push.y;
   }
+}
 
-  draw(ctx) {
-    if (!this.onFoot) return; // the car drawing covers the driver
-    ctx.save();
-    ctx.translate(this.x, this.y);
-    ctx.fillStyle = 'rgba(0,0,0,0.30)';
+/** Draw Mara: shadow, body, head, and the swing arc while she punches. */
+export function drawPlayer(ctx, game) {
+  const p = game.player;
+  if (p.inCar) return;
+  const bob = p.moving ? Math.sin(p.walkPhase) * 2 : 0;
+  ctx.save();
+  ctx.translate(p.x, p.y + bob * 0.4);
+  // Shadow.
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(0, 8, 12, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Body: teal jacket, the colour the player reads as "you".
+  ctx.rotate(p.angle);
+  ctx.fillStyle = p.hurtFlash > 0 ? '#ff6a6a' : '#19b8a6';
+  ctx.beginPath();
+  ctx.arc(0, 0, PLAYER.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#0f7a6e';
+  ctx.fillRect(-4, -PLAYER.radius, 8, PLAYER.radius * 2);
+  // Head and hair.
+  ctx.fillStyle = '#f2c9a0';
+  ctx.beginPath();
+  ctx.arc(4, 0, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#2a1f1a';
+  ctx.beginPath();
+  ctx.arc(1, 0, 6.5, Math.PI * 0.5, Math.PI * 1.5);
+  ctx.fill();
+  // Punch swing.
+  if (p.punchAnim > 0) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.ellipse(2, 4, 13, 9, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.rotate(this.dir);
-    // Yellow courier jacket, arms, head — Mara faces her walking direction.
-    ctx.fillStyle = '#e8b23a';
-    ctx.beginPath();
-    ctx.arc(0, 0, 12, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#20242c';
-    ctx.fillRect(6, -9, 12, 5);
-    ctx.fillRect(6, 4, 12, 5);
-    ctx.fillStyle = '#f2c9a0';
-    ctx.beginPath();
-    ctx.arc(4, 0, 6.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#3a2a1a';
-    ctx.beginPath();
-    ctx.arc(2, 0, 6.5, Math.PI * 0.6, Math.PI * 1.5);
-    ctx.fill();
-    ctx.restore();
-    if (this.hurtCd > 0.25) {
-      ctx.strokeStyle = 'rgba(255,60,40,0.8)';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(this.x, this.y, 18, 0, Math.PI * 2);
-      ctx.stroke();
-    }
+    ctx.arc(0, 0, PLAYER.punchRange * 0.8, -PLAYER.punchArc, PLAYER.punchArc);
+    ctx.stroke();
   }
+  ctx.restore();
 }

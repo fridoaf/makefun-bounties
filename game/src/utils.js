@@ -1,70 +1,78 @@
-// Solara Bay — small pure helpers: angles, clamping, seeded random, overlap.
-// No state, no drawing, no game rules. Every other module imports from here.
+// Small math, a seeded random source, and the collision helpers the rest of
+// the game shares. Nothing here knows about the game itself.
 
-export const TAU = Math.PI * 2;
+export const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+export const lerp = (a, b, t) => a + (b - a) * t;
 
-export function clamp(v, lo, hi) {
-  return v < lo ? lo : v > hi ? hi : v;
-}
-
-export function lerp(a, b, t) {
-  return a + (b - a) * t;
-}
-
-export function dist(ax, ay, bx, by) {
-  return Math.hypot(bx - ax, by - ay);
-}
-
-// Shortest signed turn from `from` to `to`, in (-PI, PI].
-export function angDiff(from, to) {
-  let d = (to - from) % TAU;
-  if (d > Math.PI) d -= TAU;
-  if (d <= -Math.PI) d += TAU;
+/** Shortest signed turn from angle `a` to angle `b`, in radians. */
+export function angleDiff(a, b) {
+  let d = (b - a) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
   return d;
 }
 
-export function angleTo(ax, ay, bx, by) {
-  return Math.atan2(by - ay, bx - ax);
-}
+export const dist2 = (ax, ay, bx, by) => {
+  const dx = bx - ax;
+  const dy = by - ay;
+  return dx * dx + dy * dy;
+};
+export const dist = (ax, ay, bx, by) => Math.sqrt(dist2(ax, ay, bx, by));
 
-// Deterministic RNG (mulberry32) so the generated city is identical every run.
-export function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+/** Mulberry32: a tiny seeded RNG, so a seed always builds the same city. */
+export function makeRng(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
 
-export function rand(rng, lo, hi) {
+export function pick(rng, list) {
+  return list[Math.floor(rng() * list.length)];
+}
+
+export function range(rng, lo, hi) {
   return lo + rng() * (hi - lo);
 }
 
-export function randi(rng, lo, hi) {
-  return Math.floor(rand(rng, lo, hi + 1));
+export function rangeInt(rng, lo, hi) {
+  return lo + Math.floor(rng() * (hi - lo + 1));
 }
 
-export function pick(rng, arr) {
-  return arr[Math.floor(rng() * arr.length)];
-}
-
-export function rectsOverlap(a, b, pad = 0) {
-  return (
-    a.x - pad < b.x + b.w + pad &&
-    a.x + a.w + pad > b.x - pad &&
-    a.y - pad < b.y + b.h + pad &&
-    a.y + a.h + pad > b.y - pad
-  );
-}
-
-// Circle against an axis-aligned rectangle, used for people and cars vs buildings.
-export function circleHitsRect(cx, cy, r, rect) {
+/** Circle against an axis-aligned box: push the circle out, return the depth. */
+export function circleVsRect(cx, cy, r, rect) {
   const nx = clamp(cx, rect.x, rect.x + rect.w);
   const ny = clamp(cy, rect.y, rect.y + rect.h);
   const dx = cx - nx;
   const dy = cy - ny;
-  return dx * dx + dy * dy < r * r;
+  const d2 = dx * dx + dy * dy;
+  if (d2 >= r * r) return null;
+  if (d2 === 0) return { dx: 0, dy: -r, depth: r };
+  const d = Math.sqrt(d2);
+  return { dx: (dx / d) * (r - d), dy: (dy / d) * (r - d), depth: r - d };
+}
+
+export function rectsOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+export function pointInRect(x, y, rect) {
+  return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+}
+
+/** Format game minutes since midnight as "14:05". */
+export function clockText(minutes) {
+  const m = Math.floor(minutes) % 1440;
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+/** Money with a thousands separator, "$1,250". */
+export function moneyText(n) {
+  return `$${Math.floor(n).toLocaleString('en-US')}`;
 }

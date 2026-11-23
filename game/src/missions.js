@@ -1,362 +1,326 @@
-// Solara Bay — story missions and side work.
-// Five missions for Mara Voss, plus hidden packages and taxi fares.
-// This file knows the story; the engine in main.js drives it.
+// Mara Voss's story: five jobs for the syndicate she owes, plus the side
+// work that pays the rent — taxi fares and eight hidden packages. A mission
+// is a chain of steps; each step names a place, a job, and what finishes it.
 
-import { LANDMARKS, nearestRoadPoint } from './city.js';
-import { Vehicle } from './vehicles.js';
-import { clamp, dist, randi } from './utils.js';
+import { MISSION_REWARDS, PACKAGE_COUNT, PACKAGE_REWARD } from './config.js';
+import { createCar } from './vehicles.js';
+import { createEnemy } from './combat.js';
 
-// Eight hidden packages, all on roads so they are always reachable.
-export const PACKAGES = [
-  { x: 280, y: 560, taken: false },
-  { x: 760, y: 200, taken: false },
-  { x: 1240, y: 920, taken: false },
-  { x: 1720, y: 560, taken: false },
-  { x: 2200, y: 1280, taken: false },
-  { x: 760, y: 1640, taken: false },
-  { x: 1720, y: 200, taken: false },
-  { x: 1240, y: 1640, taken: false },
+export const PACKAGE_SPOTS = [
+  { x: 300, y: 500 }, { x: 780, y: 200 }, { x: 1740, y: 900 }, { x: 2220, y: 1300 },
+  { x: 1260, y: 1300 }, { x: 300, y: 1760 }, { x: 2220, y: 1760 }, { x: 1740, y: 300 },
 ];
 
-export const MISSIONS = [
+const MISSION_DEFS = [
   {
-    id: 'm1', name: 'Paket Tepat Waktu', reward: 300,
-    brief: 'Mara: "Satu paket untuk Marina Quay, lalu antar ke Palm Heights sebelum jam habis."',
+    id: 1,
+    title: 'First Delivery',
+    start: { x: 780, y: 1480, label: 'Bay Fuel — meet the fixer' },
+    brief: [
+      'Mara Voss, courier, in debt to the Kess syndicate.',
+      'The fixer at Bay Fuel has a first job: a package at the safehouse.',
+      'Take it to the Harbour Office — fast. The client pays for speed.',
+    ],
+    reward: MISSION_REWARDS[0],
     steps: [
-      { type: 'pickup', lm: 'marina', r: 110, text: 'Ambil paket di Marina Quay (tekan F)' },
-      { type: 'deliver', x: 1240, y: 1280, r: 80, text: 'Antar paket ke Palm Heights', timer: 90 },
+      { kind: 'goto', x: 300, y: 1620, radius: 70, label: 'Pick up the package at the safehouse' },
+      { kind: 'goto', x: 780, y: 420, radius: 70, label: 'Deliver to the Harbour Office', timer: 90, needCar: false },
     ],
   },
   {
-    id: 'm2', name: 'Mobil Dario', reward: 450,
-    brief: 'Dario Kess memamerkan Vela GT barunya di Neon Row. Ambil mobil itu, bawa ke bengkel Dockside Fuel.',
+    id: 2,
+    title: 'The Quiet Lift',
+    start: { x: 1260, y: 900, label: 'Lumen Club — Dario\'s car' },
+    brief: [
+      'Dario Kess parks his Vesper GT outside his own club. Insulting, really.',
+      'Take it. Bring it to the safehouse. And do not let the SBPD see you.',
+      'If the heat rises past one star, the job is blown.',
+    ],
+    reward: MISSION_REWARDS[1],
     steps: [
-      { type: 'goto', lm: 'club', r: 120, text: 'Pergi ke Club Lumen, Neon Row' },
-      { type: 'steal', x: 2140, y: 200, r: 70, text: 'Curi Vela GT merah muda itu (tekan E)' },
-      { type: 'deliverCar', lm: 'gas', r: 120, text: 'Bawa Vela GT ke Dockside Fuel' },
+      { kind: 'steal', x: 1260, y: 900, radius: 80, label: 'Get in Dario\'s Vesper GT' },
+      { kind: 'goto', x: 300, y: 1620, radius: 70, label: 'Bring the Vesper to the safehouse', needCar: true, maxWanted: 1 },
     ],
   },
   {
-    id: 'm3', name: 'Kejar Kurir', reward: 500,
-    brief: 'Kurir saingan kabur lewat Coral Beach dengan daftar pelanggan kita. Kejar dia sampai menyerah.',
+    id: 3,
+    title: 'Beach Runner',
+    start: { x: 1400, y: 1760, label: 'Coral Beach — the rival' },
+    brief: [
+      'A rival courier is running Kess cargo down Coral Beach.',
+      'Ram his sedan until he drops the package, then grab it.',
+      'Deliver it to the Harbour Office and the route is yours.',
+    ],
+    reward: MISSION_REWARDS[2],
     steps: [
-      { type: 'chase', x: 1760, y: 1640, r: 90, text: 'Kejar kurir saingan di jalan pantai' },
+      { kind: 'chase', label: 'Ram the rival courier — 3 hits to stop him' },
+      { kind: 'goto', x: 0, y: 0, radius: 55, label: 'Grab the dropped package', dynamic: true },
+      { kind: 'goto', x: 780, y: 420, radius: 70, label: 'Deliver the package to the Harbour Office' },
     ],
   },
   {
-    id: 'm4', name: 'Penyelamatan Dockside', reward: 600,
-    brief: 'Rekan Mara, Ivo, dikepung anak buah Dario di gudang Dockside. Bebaskan dia, lalu bawa ke rumah sakit.',
+    id: 4,
+    title: 'Dockside Rescue',
+    start: { x: 1740, y: 1300, label: 'Warehouse 7 — Rook is pinned' },
+    brief: [
+      'Rook, Mara\'s wheelman, is pinned at Warehouse 7 with the SBPD closing in.',
+      'Reach him, then drive him to the safehouse. The heat is already on you.',
+    ],
+    reward: MISSION_REWARDS[3],
     steps: [
-      { type: 'goto', x: 280, y: 1280, r: 90, text: 'Pergi ke gudang Dockside' },
-      { type: 'fight', x: 280, y: 1280, r: 130, kills: 3, text: 'Kalahkan 3 anak buah Dario (Space untuk memukul)' },
-      { type: 'deliver', lm: 'hospital', r: 110, text: 'Bawa Ivo ke Solara General' },
+      { kind: 'goto', x: 1740, y: 1300, radius: 70, label: 'Reach Rook at Warehouse 7', setWanted: 2 },
+      { kind: 'goto', x: 300, y: 1620, radius: 70, label: 'Drive Rook to the safehouse', needCar: true },
     ],
   },
   {
-    id: 'm5', name: 'Konfrontasi Neon Row', reward: 800,
-    brief: 'Terakhir: masuk Club Lumen dan hadapi Dario Kess sendiri. Akhiri utang ini malam ini juga.',
+    id: 5,
+    title: 'The Neon Reckoning',
+    start: { x: 1260, y: 900, label: 'Lumen Club — end it' },
+    brief: [
+      'Five jobs, one debt, and Dario Kess at the end of it.',
+      'Walk into the Lumen Club. His guards come first. Then him.',
+      'Finish this and the debt is gone. Finish this and Solara Bay is yours.',
+    ],
+    reward: MISSION_REWARDS[4],
     steps: [
-      { type: 'goto', lm: 'club', r: 120, text: 'Masuk ke Club Lumen' },
-      { type: 'fight', lm: 'club', r: 140, kills: 5, boss: true, text: 'Kalahkan Dario Kess dan pengawalnya' },
+      { kind: 'fight', x: 1260, y: 900, label: 'Fight through Dario\'s guards' },
+      { kind: 'fight', x: 1260, y: 900, label: 'Defeat Dario Kess' },
     ],
   },
 ];
 
-function resolveTarget(step) {
-  if (step.lm && LANDMARKS[step.lm]) {
-    const lm = LANDMARKS[step.lm];
-    return { x: lm.x, y: lm.y, r: step.r, label: lm.label };
-  }
-  return { x: step.x, y: step.y, r: step.r, label: '' };
+/** Say a queue of subtitle lines, one after another. */
+export function say(game, lines) {
+  game.dialogLines = [...lines];
+  game.dialogIndex = 0;
+  game.dialogTimer = 5;
 }
 
-export class Missions {
-  constructor() {
-    this.idx = 0;
-    this.step = 0;
-    this.active = false;
-    this.timer = 0;
-    this.dialog = []; // { speaker, text, t }
-    this.kills = 0;
-    this.killsNeeded = 0;
-    this.chaseCar = null;
-    this.chaseHold = 0;
-    this.stealCar = null;
-    this.fightSpawned = false;
-    this.taxi = null; // { phase, px, py, dx, dy, fare, timer }
-    this.storyDone = false;
-    this.packagesFound = 0;
-  }
+export function createMissionState() {
+  return {
+    defs: MISSION_DEFS,
+    done: [false, false, false, false, false],
+    current: null, // { def, stepIndex, timer, data }
+    taxi: null,
+    taxiTimer: 18,
+    packages: PACKAGE_SPOTS.map((p) => ({ ...p, taken: false })),
+    packagesTaken: 0,
+    storyDone: false,
+  };
+}
 
-  current() {
-    return MISSIONS[this.idx] || null;
-  }
+export function nextMissionIndex(game) {
+  return game.missions.done.findIndex((d) => !d);
+}
 
-  currentStep() {
-    const m = this.current();
-    return m ? m.steps[this.step] : null;
-  }
+export function startMission(game, index) {
+  const def = MISSION_DEFS[index];
+  game.missions.current = { def, stepIndex: 0, timer: 0, data: {} };
+  say(game, [`JOB ${def.id}: ${def.title}`, ...def.brief]);
+  game.notify(`New job: ${def.title} — $${def.reward} on completion`);
+  enterStep(game);
+}
 
-  say(speaker, text) {
-    this.dialog.push({ speaker, text, t: 7 });
-    if (this.dialog.length > 3) this.dialog.shift();
+function enterStep(game) {
+  const m = game.missions.current;
+  if (!m) return;
+  const step = m.def.steps[m.stepIndex];
+  m.timer = step.timer ?? 0;
+  m.data = {};
+  if (step.setWanted !== undefined) {
+    game.wanted = step.setWanted;
+    game.hiddenTimer = 0;
   }
-
-  start(idx, game) {
-    this.idx = idx;
-    this.step = 0;
-    this.active = true;
-    this.timer = 0;
-    this.kills = 0;
-    this.fightSpawned = false;
-    this.chaseCar = null;
-    this.stealCar = null;
-    const m = this.current();
-    if (!m) return;
-    this.say('MARA', m.brief);
-    game.notify('Misi ' + (idx + 1) + '/5: ' + m.name);
-    game.audio.sfx('mission');
-    game.setCheckpoint();
+  if (step.kind === 'steal') {
+    // Dario's Vesper GT, parked outside the club.
+    const car = createCar('sport', 1330, 940, Math.PI / 2, { parked: true, color: '#e83a7d' });
+    car.missionCar = true;
+    game.cars.push(car);
+    m.data.car = car;
   }
-
-  objectiveText() {
-    if (this.storyDone) return 'Cerita selesai — jelajahi Solara Bay sesukamu.';
-    const s = this.currentStep();
-    if (!s) return 'Bicara dengan kontakmu untuk misi berikutnya.';
-    let t = s.text;
-    if (s.type === 'fight') t += '  (' + this.kills + '/' + this.killsNeeded + ')';
-    if (s.timer && this.timer > 0) t += '  — ' + Math.ceil(this.timer) + ' dtk';
-    return t;
+  if (step.kind === 'chase') {
+    const rival = createCar('sedan', 1700, 1760, 0, { npc: true, color: '#7a3ad8' });
+    rival.missionCar = true;
+    rival.rival = true;
+    game.cars.push(rival);
+    m.data.rival = rival;
+    m.data.hits = 0;
+    m.data.hitCooldown = 0;
   }
-
-  target() {
-    if (this.storyDone) return null;
-    const s = this.currentStep();
-    if (!s) return null;
-    if (s.type === 'chase' && this.chaseCar) {
-      return { x: this.chaseCar.x, y: this.chaseCar.y, r: 80, label: 'Kurir saingan' };
+  if (step.kind === 'fight') {
+    const n = m.stepIndex === 0 ? 4 : 1;
+    game.enemies = [];
+    for (let i = 0; i < n; i += 1) {
+      const a = (i / n) * Math.PI * 2;
+      const kind = m.stepIndex === 1 ? 'dario' : 'guard';
+      game.enemies.push(createEnemy(1260 + Math.cos(a) * 130, 900 + Math.sin(a) * 110, kind));
     }
-    if (s.type === 'steal' && this.stealCar) {
-      return { x: this.stealCar.x, y: this.stealCar.y, r: 70, label: 'Vela GT' };
-    }
-    return resolveTarget(s);
+    game.notify(m.stepIndex === 0 ? 'Four guards between you and the club.' : 'Dario Kess himself. End it.');
   }
-
-  // Called by main.js when the player presses F near an objective.
-  interact(game) {
-    const s = this.currentStep();
-    if (!s || !this.active) return false;
-    const p = game.player.pos;
-    if (s.type === 'pickup') {
-      const t = resolveTarget(s);
-      if (dist(p.x, p.y, t.x, t.y) < t.r) {
-        game.notify('Paket diambil. Cepat, antar ke Palm Heights!');
-        game.audio.sfx('pickup');
-        this.advance(game);
-        return true;
-      }
-    }
-    // Taxi pickup / drop-off.
-    if (this.taxi) {
-      if (this.taxi.phase === 'wait' && dist(p.x, p.y, this.taxi.px, this.taxi.py) < 60) {
-        this.taxi.phase = 'ride';
-        this.say('PENUMPANG', 'Ke ' + this.taxi.destName + ', tolong. Saya buru-buru!');
-        return true;
-      }
-      if (this.taxi.phase === 'ride' && dist(p.x, p.y, this.taxi.dx, this.taxi.dy) < 70) {
-        const bonus = this.taxi.timer > 30 ? 50 : 0;
-        const fare = this.taxi.fare + bonus;
-        game.player.money += fare;
-        game.notify('Tarif taksi +$' + fare + (bonus ? ' (bonus tepat waktu!)' : ''));
-        game.audio.sfx('coin');
-        this.taxi = null;
-        return true;
-      }
-    }
-    return false;
+  if (step.kind === 'goto' && step.dynamic) {
+    // The dropped package lies where the rival stopped.
+    const rival = m.data.rival;
+    step.x = rival ? rival.x : 1400;
+    step.y = rival ? rival.y : 1760;
   }
+}
 
-  advance(game) {
-    this.step++;
-    this.timer = 0;
-    this.fightSpawned = false;
-    const m = this.current();
-    if (!m) return;
-    if (this.step >= m.steps.length) {
-      this.complete(game);
-      return;
-    }
-    const s = this.currentStep();
-    if (s.timer) this.timer = s.timer;
-    if (s.type === 'fight') {
-      this.kills = 0;
-      this.killsNeeded = s.kills;
-    }
-    game.audio.sfx('objective');
+function failMission(game, why) {
+  const m = game.missions.current;
+  if (!m) return;
+  game.notify(`Job failed — ${why}. Try again from the start.`);
+  say(game, [`${m.def.title}: job failed.`, why]);
+  game.missions.current = null;
+  game.enemies = [];
+  // Tow the mission cars away so a retry starts clean.
+  game.cars = game.cars.filter((c) => !c.missionCar);
+  game.policeCars = game.policeCars.filter((c) => !c.missionCar);
+}
+
+function finishStep(game) {
+  const m = game.missions.current;
+  m.stepIndex += 1;
+  if (m.stepIndex >= m.def.steps.length) {
+    finishMission(game);
+    return;
   }
+  enterStep(game);
+}
 
-  complete(game) {
-    const m = this.current();
-    game.player.money += m.reward;
-    game.notify('Misi selesai: ' + m.name + '  +$' + m.reward);
-    game.audio.sfx('missionDone');
-    game.combat.burst(game.player.x, game.player.y, '#ffd23e', 26, 240);
-    this.active = false;
-    game.setCheckpoint();
-    if (this.idx >= MISSIONS.length - 1) {
-      this.storyDone = true;
-      game.winGame();
-      return;
-    }
-    this.idx++;
-    this.step = 0;
-    this.say('KONTAK', 'Kerja bagus, Mara. Misi berikutnya: ' + MISSIONS[this.idx].name + '. Pergi ke penanda kuning.');
-    game.notify('Misi baru: ' + MISSIONS[this.idx].name + ' — tekan F untuk mulai');
+function finishMission(game) {
+  const m = game.missions.current;
+  const def = m.def;
+  game.cash += def.reward;
+  game.missions.done[def.id - 1] = true;
+  game.missions.current = null;
+  game.enemies = [];
+  game.cars = game.cars.filter((c) => !c.missionCar);
+  game.policeCars = game.policeCars.filter((c) => !c.missionCar);
+  game.notify(`Job complete: ${def.title} — earned $${def.reward}`);
+  say(game, [`${def.title} — complete.`, `+$${def.reward}. The city notices people who finish jobs.`]);
+  if (game.missions.done.every(Boolean)) {
+    game.missions.storyDone = true;
+    say(game, ['THE DEBT IS PAID.', 'Solara Bay is yours now, Mara. Drive anywhere.']);
+    game.notify('Story complete — Solara Bay is yours. Free roam!');
   }
+  game.saveGame();
+}
 
-  // The next mission only starts when the player accepts it at the marker.
-  acceptNext(game) {
-    if (this.active || this.storyDone) return;
-    const m = this.current();
-    if (!m) return;
-    const t = resolveTarget(m.steps[0]);
-    const p = game.player.pos;
-    if (dist(p.x, p.y, t.x, t.y) > 150) {
-      game.notify('Pergi ke penanda kuning dan tekan F untuk mulai: ' + m.name);
-      return;
-    }
-    this.start(this.idx, game);
+/** Where the HUD arrow and the minimap should point right now. */
+export function missionMarker(game) {
+  const m = game.missions.current;
+  if (m) {
+    const step = m.def.steps[m.stepIndex];
+    if (step.kind === 'steal' && m.data.car) return { x: m.data.car.x, y: m.data.car.y, label: step.label };
+    if (step.kind === 'chase' && m.data.rival) return { x: m.data.rival.x, y: m.data.rival.y, label: step.label };
+    if (step.kind === 'fight') return { x: step.x, y: step.y, label: step.label };
+    return { x: step.x, y: step.y, label: step.label };
   }
+  const next = nextMissionIndex(game);
+  if (next >= 0) {
+    const def = MISSION_DEFS[next];
+    return { x: def.start.x, y: def.start.y, label: `Next job: ${def.title}` };
+  }
+  return null;
+}
 
-  onEnemyDown(game) {
-    const s = this.currentStep();
-    if (!s || s.type !== 'fight') return;
-    this.kills++;
-    if (this.kills >= this.killsNeeded) {
-      game.notify('Semua musuh kalah!');
-      this.advance(game);
+export function currentObjective(game) {
+  const m = game.missions.current;
+  if (!m) {
+    const next = nextMissionIndex(game);
+    if (next >= 0) return `Next job: ${MISSION_DEFS[next].title} — head to the yellow marker`;
+    return 'Free roam — Solara Bay is yours';
+  }
+  const step = m.def.steps[m.stepIndex];
+  let text = step.label;
+  if (m.timer > 0) text += ` — ${Math.ceil(m.timer)}s`;
+  if (step.kind === 'chase') text += ` (${m.data.hits ?? 0}/3)`;
+  return text;
+}
+
+export function updateMissions(game, dt) {
+  // Subtitle queue.
+  if (game.dialogLines && game.dialogIndex < game.dialogLines.length) {
+    game.dialogTimer -= dt;
+    if (game.dialogTimer <= 0) {
+      game.dialogIndex += 1;
+      game.dialogTimer = 5;
     }
   }
 
-  maybeStartTaxi(game) {
-    if (this.taxi || Math.random() > 0.004) return;
-    const p = game.player.pos;
-    const spot = nearestRoadPoint(p.x + (Math.random() < 0.5 ? -500 : 500), p.y + (Math.random() < 0.5 ? -380 : 380));
-    const dest = nearestRoadPoint(p.x + (Math.random() < 0.5 ? -700 : 700), p.y + (Math.random() < 0.5 ? -500 : 500));
-    const fare = 80 + randi(Math.random, 0, 7) * 10;
-    this.taxi = {
-      phase: 'wait',
-      px: spot.x, py: spot.y,
-      dx: dest.x, dy: dest.y,
-      destName: 'tujuan',
-      fare,
-      timer: 75,
-    };
-    game.notify('Penumpang taksi menunggu di dekat sini (penanda hijau). Tekan F untuk mengantar.');
-  }
+  const m = game.missions.current;
+  const p = game.player;
 
-  update(dt, game) {
-    for (const d of this.dialog) d.t -= dt;
-    this.dialog = this.dialog.filter((d) => d.t > 0);
-
-    const p = game.player;
-    const pp = p.pos;
-
-    // Hidden packages: walk over one to collect it.
-    for (const pk of PACKAGES) {
-      if (!pk.taken && dist(pp.x, pp.y, pk.x, pk.y) < 30) {
-        pk.taken = true;
-        this.packagesFound++;
-        p.money += 150;
-        game.notify('Paket tersembunyi ditemukan! +$150 (' + this.packagesFound + '/8)');
-        game.audio.sfx('coin');
-        game.combat.burst(pk.x, pk.y, '#57d9ff', 14, 160);
-      }
-    }
-
-    // Taxi timer.
-    if (this.taxi) {
-      this.taxi.timer -= dt;
-      if (this.taxi.timer <= 0) {
-        game.notify('Penumpang taksi pergi — terlambat.');
-        this.taxi = null;
-      }
-    } else if (p.vehicle) {
-      this.maybeStartTaxi(game);
-    }
-
-    if (!this.active || this.storyDone) return;
-    const s = this.currentStep();
-    if (!s) return;
-
-    if (s.timer) {
-      this.timer -= dt;
-      if (this.timer <= 0) {
-        game.notify('Waktu habis! Misi diulang dari awal misi ini.');
-        game.audio.sfx('fail');
-        this.start(this.idx, game);
+  // Auto-start the next job when Mara reaches its start marker.
+  if (!m) {
+    const next = nextMissionIndex(game);
+    if (next >= 0) {
+      const def = MISSION_DEFS[next];
+      if (Math.hypot(p.x - def.start.x, p.y - def.start.y) < 75) {
+        startMission(game, next);
         return;
       }
     }
-
-    const t = resolveTarget(s);
-    switch (s.type) {
-      case 'goto':
-      case 'deliver':
-        if (dist(pp.x, pp.y, t.x, t.y) < t.r) this.advance(game);
-        break;
-      case 'deliverCar':
-        if (p.vehicle && dist(pp.x, pp.y, t.x, t.y) < t.r) this.advance(game);
-        break;
-      case 'steal': {
-        if (!this.stealCar) {
-          this.stealCar = new Vehicle('sport', s.x, s.y, Math.PI / 2, { owner: 'parked', color: '#ff2e88' });
-          game.parkedCars.push(this.stealCar);
+  } else {
+    const step = m.def.steps[m.stepIndex];
+    if (m.timer > 0) {
+      m.timer -= dt;
+      if (m.timer <= 0) {
+        failMission(game, 'Out of time');
+        return;
+      }
+    }
+    if (step.maxWanted !== undefined && game.wanted > step.maxWanted) {
+      failMission(game, 'The SBPD spotted you');
+      return;
+    }
+    switch (step.kind) {
+      case 'goto': {
+        const d = Math.hypot(p.x - step.x, p.y - step.y);
+        const okCar = !step.needCar || p.inCar;
+        if (d < step.radius && okCar) {
+          if (step.needCar && !p.inCar) break;
+          finishStep(game);
         }
-        if (p.vehicle === this.stealCar) {
-          this.stealCar.stolen = true;
-          game.police.addWanted(1, 'mobil curian terlihat', game);
-          game.notify('Vela GT dicuri! Polisi waspada — bawa ke bengkel, cepat!');
-          this.advance(game);
+        break;
+      }
+      case 'steal': {
+        if (p.inCar && p.inCar === m.data.car) {
+          finishStep(game);
         }
         break;
       }
       case 'chase': {
-        if (!this.chaseCar) {
-          this.chaseCar = new Vehicle('sport', s.x, s.y, 0, { owner: 'npc', color: '#57d9ff' });
-          this.chaseCar.speed = 240;
-        }
-        const c = this.chaseCar;
-        // The rival courier flees east along the beach road, then loops back.
-        c.x += 250 * dt;
-        c.y = 1640 + Math.sin(c.x * 0.01) * 12;
-        c.angle = 0;
-        if (c.x > 2400) c.x = 1500;
-        const d = dist(pp.x, pp.y, c.x, c.y);
-        if (d < 80) {
-          this.chaseHold += dt;
-          if (this.chaseHold > 2.5) {
-            game.notify('Kurir menyerah! Daftar pelanggan kembali.');
-            this.chaseCar = null;
-            this.advance(game);
+        const rival = m.data.rival;
+        if (!rival) break;
+        if (m.data.hitCooldown > 0) m.data.hitCooldown -= dt;
+        // The rival cruises east along the beach road, weaving a little.
+        rival.angle = 0 + Math.sin(game.time * 0.8) * 0.12;
+        rival.speed = 250;
+        rival.x += Math.cos(rival.angle) * rival.speed * dt;
+        rival.y += Math.sin(rival.angle) * rival.speed * dt;
+        if (rival.x > 2400) rival.x = 300;
+        // A ram: Mara's car overlapping the rival at speed.
+        if (p.inCar && m.data.hitCooldown <= 0) {
+          const d = Math.hypot(p.x - rival.x, p.y - rival.y);
+          if (d < 62 && Math.abs(p.inCar.speed) > 120) {
+            m.data.hits += 1;
+            m.data.hitCooldown = 1.5;
+            rival.speed = 60;
+            game.audio?.thud();
+            game.notify(`Hit ${m.data.hits}/3 — he's wobbling!`);
+            if (m.data.hits >= 3) {
+              rival.speed = 0;
+              rival.parked = true;
+              finishStep(game);
+            }
           }
-        } else {
-          this.chaseHold = Math.max(0, this.chaseHold - dt);
         }
         break;
       }
       case 'fight': {
-        if (!this.fightSpawned) {
-          this.fightSpawned = true;
-          this.kills = 0;
-          this.killsNeeded = s.kills;
-          // Enemies gather on the road beside the target, never inside a building.
-          const road = nearestRoadPoint(t.x, t.y);
-          for (let i = 0; i < s.kills - (s.boss ? 1 : 0); i++) {
-            game.combat.spawnEnemy(road.x + (Math.random() - 0.5) * 220, road.y + (Math.random() - 0.5) * 220, 75, 'Anak buah Dario');
-          }
-          if (s.boss) game.combat.spawnEnemy(road.x, road.y - 60, 220, 'Dario Kess', true);
-          this.say('DARIO', 'Mara Voss. Utangmu lunas malam ini — dengan cara keras.');
+        if (game.enemies.length === 0 || game.enemies.every((e) => !e.alive)) {
+          finishStep(game);
         }
         break;
       }
@@ -365,76 +329,92 @@ export class Missions {
     }
   }
 
-  drawMarkers(ctx, time) {
-    const pulse = 1 + Math.sin(time * 5) * 0.15;
-    const t = this.target();
-    if (t && this.active) {
-      ctx.save();
-      ctx.translate(t.x, t.y);
-      ctx.strokeStyle = '#ffd23e';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.arc(0, 0, t.r * 0.55 * pulse, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(255,210,62,0.18)';
-      ctx.beginPath();
-      ctx.arc(0, 0, t.r * 0.55 * pulse, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#ffd23e';
-      ctx.beginPath();
-      ctx.moveTo(0, -t.r * 0.55 - 26);
-      ctx.lineTo(10, -t.r * 0.55 - 6);
-      ctx.lineTo(-10, -t.r * 0.55 - 6);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    }
-    if (!this.active && !this.storyDone) {
-      // Idle marker: walk here and press F to start the next mission.
-      const m = this.current();
-      if (m) {
-        const mt = resolveTarget(m.steps[0]);
-        ctx.save();
-        ctx.translate(mt.x, mt.y);
-        ctx.strokeStyle = '#ffd23e';
-        ctx.setLineDash([8, 6]);
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(0, 0, 46 * pulse, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = '#ffd23e';
-        ctx.font = 'bold 13px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('F: MULAI MISI', 0, -56);
-        ctx.restore();
-      }
-    }
-    if (this.taxi) {
-      const tx = this.taxi.phase === 'wait' ? { x: this.taxi.px, y: this.taxi.py } : { x: this.taxi.dx, y: this.taxi.dy };
-      ctx.save();
-      ctx.translate(tx.x, tx.y);
-      ctx.strokeStyle = '#57d977';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(0, 0, 26 * pulse, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = '#57d977';
-      ctx.font = 'bold 12px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(this.taxi.phase === 'wait' ? 'TAXI' : 'TUJUAN', 0, -32);
-      ctx.restore();
-    }
-    for (const pk of PACKAGES) {
-      if (pk.taken) continue;
-      ctx.save();
-      ctx.translate(pk.x, pk.y);
-      ctx.rotate(Math.PI / 4);
-      ctx.fillStyle = '#57d9ff';
-      ctx.fillRect(-7, -7, 14, 14);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(-7, -2, 14, 4);
-      ctx.restore();
+  // --- side work: hidden packages ---
+  for (const pkg of game.missions.packages) {
+    if (pkg.taken) continue;
+    if (Math.hypot(p.x - pkg.x, p.y - pkg.y) < 42) {
+      pkg.taken = true;
+      game.missions.packagesTaken += 1;
+      game.cash += PACKAGE_REWARD;
+      game.audio?.pickup();
+      game.notify(`Hidden package ${game.missions.packagesTaken}/${PACKAGE_COUNT} — +$${PACKAGE_REWARD}`);
     }
   }
+
+  // --- side work: taxi fares ---
+  updateTaxi(game, dt);
+}
+
+function updateTaxi(game, dt) {
+  const ms = game.missions;
+  if (!ms.taxi) {
+    // A hail appears when Mara is driving and free.
+    ms.taxiTimer -= dt;
+    if (ms.taxiTimer <= 0 && game.player.inCar && !game.missions.current) {
+      ms.taxiTimer = 26;
+      const spot = randomSidewalkSpot(game);
+      if (spot) {
+        ms.taxi = { state: 'hail', x: spot.x, y: spot.y, fare: 0, timer: 0, dest: null };
+        game.notify('Taxi hail nearby — press F at the passenger.');
+      }
+    }
+    return;
+  }
+  const taxi = ms.taxi;
+  const p = game.player;
+  if (taxi.state === 'hail') {
+    if (Math.hypot(p.x - taxi.x, p.y - taxi.y) < 60 && p.inCar && game.lastInteract) {
+      taxi.state = 'ride';
+      taxi.dest = randomRoadDest(game);
+      const d = Math.hypot(taxi.dest.x - p.x, taxi.dest.y - p.y);
+      taxi.fare = 40 + Math.round(d / 22);
+      taxi.timer = 45 + d / 40;
+      game.notify(`Passenger aboard — take them to the marker. Fare $${taxi.fare}`);
+    }
+    // The hail gives up after a while.
+    taxi.timer += dt;
+    if (taxi.timer > 30) {
+      ms.taxi = null;
+      ms.taxiTimer = 20;
+    }
+    return;
+  }
+  // Riding: the clock runs.
+  taxi.timer -= dt;
+  if (taxi.timer <= 0) {
+    game.notify('The passenger gave up and walked off.');
+    ms.taxi = null;
+    ms.taxiTimer = 20;
+    return;
+  }
+  if (Math.hypot(p.x - taxi.dest.x, p.y - taxi.dest.y) < 70 && p.inCar) {
+    game.cash += taxi.fare;
+    game.audio?.pickup();
+    game.notify(`Fare paid — +$${taxi.fare}. Nice driving.`);
+    ms.taxi = null;
+    ms.taxiTimer = 22;
+  }
+}
+
+function randomSidewalkSpot(game) {
+  for (let i = 0; i < 10; i += 1) {
+    const a = Math.random() * Math.PI * 2;
+    const d = 180 + Math.random() * 260;
+    const x = game.player.x + Math.cos(a) * d;
+    const y = game.player.y + Math.sin(a) * d;
+    if (x > 60 && x < 2500 && y > 60 && y < 1860) return { x, y };
+  }
+  return null;
+}
+
+function randomRoadDest(game) {
+  const p = game.player;
+  for (let i = 0; i < 12; i += 1) {
+    const vertical = Math.random() < 0.5;
+    const dest = vertical
+      ? { x: [300, 780, 1260, 1740, 2220][Math.floor(Math.random() * 5)], y: 80 + Math.random() * 1760 }
+      : { x: 80 + Math.random() * 2400, y: [280, 680, 1080, 1480, 1760][Math.floor(Math.random() * 5)] };
+    if (Math.hypot(dest.x - p.x, dest.y - p.y) > 500) return dest;
+  }
+  return { x: 1260, y: 680 };
 }

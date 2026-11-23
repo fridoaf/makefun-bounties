@@ -1,24 +1,26 @@
-// Solara Bay — entry driver for make.fun (Node 22, standard library only).
+// Solara Bay for make.fun's gta6-01 ("Make GTA 6") — the entry program.
+// Node 22, standard library only, no install and no network. It hands the
+// game in: copy this directory's game/ and screenshots/ into the output
+// directory and write /output/dossier.json with the vendored make.fun
+// library, so the scorer can check the entry byte for byte.
 //
-// The game is plain static files under game/ (index.html plus ES modules,
-// no build step, no network). This program copies game/ and screenshots/
-// next to this file into the output directory and writes dossier.json with
-// the vendored make.fun library, so the judge can read the entry.
-//
-// Run it locally with:
+// Run it locally the same way the grader runs it:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-// In the grader, MAKEFUN_OUTPUT_DIR is unset and /output is used.
+// Outside the grader, MAKEFUN_OUTPUT_DIR stands in for /output.
 
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-// The scorer's own caps (reference/gate.json): text_max_bytes shapes the
-// dossier text; the rest refuse an entry the scorer would refuse — more
-// than 4 screenshots or one over 256 KiB; more than 993 files in game/
-// or 48 MiB of game files in all; a path under game/ over 1000 bytes.
-const LIMITS = {
+const repoRoot = fileURLToPath(new URL('.', import.meta.url));
+const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+
+// The scorer's caps, from the bounty's gate: the text cap shapes the
+// dossier's bytes; the rest make this program refuse an entry the scorer
+// would refuse (too many screenshots, one too big, game/ too large, or a
+// path under game/ too long).
+const DOSSIER_CAPS = {
   text_max_bytes: 163840,
   screenshots: { max: 4, max_bytes: 262144 },
   game_max_files: 993,
@@ -26,38 +28,11 @@ const LIMITS = {
   game_path_max_bytes: 1000,
 };
 
-const repoRoot = resolve(fileURLToPath(new URL('.', import.meta.url)));
-const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-
-function copyEntry() {
-  mkdirSync(outDir, { recursive: true });
-  cpSync(join(repoRoot, 'game'), join(outDir, 'game'), { recursive: true });
-  mkdirSync(join(outDir, 'screenshots'), { recursive: true });
-  const shots = join(repoRoot, 'screenshots');
-  if (existsSync(shots)) {
-    cpSync(shots, join(outDir, 'screenshots'), { recursive: true });
-  } else {
-    console.warn('warning: no screenshots/ folder beside main.ts — the entry needs 3-4 real renders');
-  }
+mkdirSync(outputDir, { recursive: true });
+cpSync(join(repoRoot, 'game'), join(outputDir, 'game'), { recursive: true });
+mkdirSync(join(outputDir, 'screenshots'), { recursive: true });
+if (existsSync(join(repoRoot, 'screenshots'))) {
+  cpSync(join(repoRoot, 'screenshots'), join(outputDir, 'screenshots'), { recursive: true });
 }
 
-// The grader collects the output as another user, so every file must be
-// world-readable and every folder world-traversable.
-function fixPermissions(dir) {
-  for (const name of readdirSync(dir)) {
-    const full = join(dir, name);
-    const st = statSync(full);
-    if (st.isDirectory()) {
-      chmodSync(full, 0o755);
-      fixPermissions(full);
-    } else {
-      chmodSync(full, 0o644);
-    }
-  }
-}
-
-copyEntry();
-writeFileSync(join(outDir, 'dossier.json'), buildDossier(outDir, LIMITS));
-chmodSync(outDir, 0o755);
-fixPermissions(outDir);
-console.log('Solara Bay entry written to ' + outDir);
+writeFileSync(join(outputDir, 'dossier.json'), buildDossier(outputDir, DOSSIER_CAPS));

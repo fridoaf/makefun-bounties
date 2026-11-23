@@ -1,197 +1,215 @@
-// Solara Bay — the wanted level and the police response.
-// Heat rises with crimes and cools when the player stays out of sight.
-// Patrol cars chase and ram; officers on foot try to make the arrest.
+// The Solara Bay Police Department: wanted stars, patrol cars that chase and
+// ram, foot cops who run the player down, and the slow fade of the heat when
+// nobody can see her anymore.
 
-import { Vehicle } from './vehicles.js';
-import { nearestRoadPoint } from './city.js';
-import { HEAT_PER_STAR, MAX_WANTED } from './config.js';
-import { angDiff, clamp, dist } from './utils.js';
+import { WANTED } from './config.js';
+import { clamp } from './utils.js';
+import { createCar, steerNpcCar } from './vehicles.js';
+import { randomRoadPoint } from './city.js';
 
-export class Police {
-  constructor() {
-    this.heat = 0;
-    this.cars = [];
-    this.officers = [];
-    this.quiet = 0;
-    this.spawnCd = 0;
+/** The intersection nearest a point. */
+function nearestIntersection(city, x, y) {
+  let best = city.intersections[0];
+  let bestD = Infinity;
+  for (const p of city.intersections) {
+    const d = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
+    if (d < bestD) {
+      bestD = d;
+      best = p;
+    }
   }
+  return best;
+}
 
-  get stars() {
-    if (this.heat <= 0) return 0;
-    return Math.min(MAX_WANTED, Math.ceil(this.heat / HEAT_PER_STAR));
+/**
+ * The shortest road route between two points, as a chain of intersections
+ * (breadth-first over the grid graph — the roads are the graph, so the route
+ * never cuts across a block). The start intersection is left out.
+ */
+function roadRoute(city, fx, fy, tx, ty) {
+  const from = nearestIntersection(city, fx, fy);
+  const to = nearestIntersection(city, tx, ty);
+  if (from === to) return [to];
+  const prev = new Map();
+  const seen = new Set([from]);
+  const queue = [from];
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    for (const p of city.intersections) {
+      if (seen.has(p) || (p.x !== cur.x && p.y !== cur.y)) continue;
+      seen.add(p);
+      prev.set(p, cur);
+      if (p === to) {
+        const route = [p];
+        let node = p;
+        while (prev.get(node) !== from && prev.get(node) !== undefined) {
+          node = prev.get(node);
+          route.unshift(node);
+        }
+        return route;
+      }
+      queue.push(p);
+    }
   }
+  return [to];
+}
+export function raiseWanted(game, stars, x, y, reason) {
+  if (game.wanted >= WANTED.max && stars > 0) {
+    game.wanted = WANTED.max;
+  } else {
+    game.wanted = clamp(game.wanted + stars, 0, WANTED.max);
+  }
+  game.hiddenTimer = 0;
+  game.crimePulse = { x, y, t: 1.5 };
+  if (reason) game.notify(`${reason} — wanted ${'★'.repeat(game.wanted) || '☆'}`);
+}
 
-  addWanted(n, reason, game) {
-    this.heat = clamp(this.heat + n * HEAT_PER_STAR, 0, MAX_WANTED * HEAT_PER_STAR);
-    this.quiet = 0;
-    if (game) {
-      game.notify('Wanted +' + n + (reason ? ' — ' + reason : ''));
-      game.audio.sfx('sirenBlip');
-      game.traffic.scatterFrom(game.player.x, game.player.y);
+export function makeFootCop(x, y) {
+  return { x, y, angle: 0, speed: 208, bustTimer: 0, phase: 0 };
+}
+
+/** Keep the police count matched to the wanted level; spawn, chase, despawn. */
+export function updatePolice(game, dt) {
+  const wanted = game.wanted;
+  const px = game.player.x;
+  const py = game.player.y;
+
+  // How long since any cop could see her.
+  const sight = WANTED.sight[wanted];
+  const seen = game.policeCars.some((c) => Math.hypot(c.x - px, c.y - py) < sight)
+    || game.footCops.some((c) => Math.hypot(c.x - px, c.y - py) < sight);
+  if (wanted > 0) {
+    if (seen) game.hiddenTimer = 0;
+    else game.hiddenTimer += dt;
+    if (game.hiddenTimer > WANTED.hideSeconds) {
+      game.wanted -= 1;
+      game.hiddenTimer = game.hiddenTimer - WANTED.fadeEvery;
+      if (game.wanted === 0) game.notify('You lost them. Wanted level clear.');
+      else game.notify(`Heat cooling off — wanted ${'★'.repeat(game.wanted)}`);
     }
   }
 
-  clear(game) {
-    this.heat = 0;
-    this.cars = [];
-    this.officers = [];
-    this.quiet = 0;
-    if (game) game.audio.setSiren(false);
+  // Patrol cars: spawn up to the wanted level's count, despawn past it.
+  const wantCars = WANTED.policeCars[wanted];
+  while (game.policeCars.length < wantCars) {
+    const spot = randomRoadPoint(game.rng, px, py, 480);
+    const car = createCar('patrol', spot.x, spot.y, Math.atan2(py - spot.y, px - spot.x), { npc: true });
+    game.policeCars.push(car);
+    game.cars.push(car);
   }
-
-  spawnCar(game) {
-    const p = game.player.pos;
-    const spot = nearestRoadPoint(
-      clamp(p.x + (Math.random() < 0.5 ? -620 : 620), 80, 2480),
-      clamp(p.y + (Math.random() < 0.5 ? -460 : 460), 80, 1840),
-    );
-    const angle = spot.axis === 'h' ? 0 : Math.PI / 2;
-    const car = new Vehicle('police', spot.x, spot.y, angle, { owner: 'police' });
-    // ox/oy: pursuit offset from the player — cars with different offsets
-    // hold different lanes instead of all piling onto one point.
-    this.cars.push({ veh: car, stuck: 0, ox: 0, oy: 0 });
+  while (game.policeCars.length > wantCars) {
+    const car = game.policeCars.pop();
+    const i = game.cars.indexOf(car);
+    if (i >= 0) game.cars.splice(i, 1);
   }
-
-  spawnOfficer(game) {
-    const p = game.player.pos;
-    const spot = nearestRoadPoint(p.x + (Math.random() < 0.5 ? -160 : 160), p.y + (Math.random() < 0.5 ? -160 : 160));
-    this.officers.push({ x: spot.x, y: spot.y, arrest: 0, speed: 235 });
+  const wantCops = WANTED.footCops[wanted];
+  while (game.footCops.length < wantCops) {
+    const spot = randomRoadPoint(game.rng, px, py, 380);
+    game.footCops.push(makeFootCop(spot.x, spot.y));
   }
+  while (game.footCops.length > wantCops) game.footCops.pop();
 
-  update(dt, game) {
-    const player = game.player;
-    const pp = player.pos;
-    this.spawnCd -= dt;
-
-    const wantCars = Math.min(this.stars, 4);
-    while (this.cars.length < wantCars && this.spawnCd <= 0) {
-      this.spawnCar(game);
-      this.spawnCd = 1.2;
-    }
-    if (this.stars === 0) {
-      // With no heat, patrols give up and drive off.
-      this.cars = this.cars.filter((c) => dist(c.veh.x, c.veh.y, pp.x, pp.y) < 900);
-      this.officers = [];
-    }
-    if (!player.onFoot && this.stars >= 2 && this.officers.length < 2 && this.spawnCd <= 0) {
-      this.spawnOfficer(game);
-      this.spawnCd = 2;
-    }
-
-    // Nearest police distance decides whether the heat can cool.
-    let nearest = Infinity;
-    for (const c of this.cars) nearest = Math.min(nearest, dist(c.veh.x, c.veh.y, pp.x, pp.y));
-    for (const o of this.officers) nearest = Math.min(nearest, dist(o.x, o.y, pp.x, pp.y));
-    if (this.stars > 0 && nearest > 560) {
-      this.quiet += dt;
-      if (this.quiet > 5) this.heat = Math.max(0, this.heat - 7 * dt);
+  // Chase: up close a patrol car rams her directly; further out it takes
+  // the roads — a route over the intersection graph, replanned as she moves
+  // — so the pursuit reads as driving, not driving through buildings.
+  for (const car of game.policeCars) {
+    const playerSpeed = game.player.inCar ? Math.abs(game.player.inCar.speed) : 0;
+    const cruise = Math.min(430, 300 + wanted * 28 + playerSpeed * 0.55);
+    const dPlayer = Math.hypot(px - car.x, py - car.y);
+    if (dPlayer < 170) {
+      // Close in: tail her when she is fast — a chase, not a pile-up —
+      // and only ram her when she is slow enough to catch.
+      const tail = playerSpeed > 200 ? playerSpeed * 0.94 : cruise;
+      steerNpcCar(car, px, py, dt, game.city, game.cars, tail);
     } else {
-      this.quiet = 0;
-    }
-
-    // Chase cars: steer at the player (plus this car's pursuit offset, so
-    // patrols hold different lanes instead of stacking on one point),
-    // ram on contact.
-    for (const c of this.cars) {
-      const v = c.veh;
-      const tx = pp.x + (c.ox || 0);
-      const ty = pp.y + (c.oy || 0);
-      const want = Math.atan2(ty - v.y, tx - v.x);
-      const steer = clamp(angDiff(v.angle, want) * 1.6, -1, 1);
-      const d = dist(v.x, v.y, pp.x, pp.y);
-      const dtgt = dist(v.x, v.y, tx, ty);
-      v.update(dt, { throttle: dtgt > 46 ? 1 : 0.4, steer, brake: false }, game.tod);
-      if (d < 52) {
-        if (player.vehicle) {
-          player.vehicle.speed *= 0.82;
-          player.vehicle.health -= 10 * dt;
-          if (Math.random() < dt * 2) game.audio.sfx('crash');
-          if (player.vehicle.health <= 0) {
-            game.combat.burst(v.x, v.y, '#ff9040', 22);
-            player.vehicle.health = 100;
-            player.exitVehicle(game);
-            game.notify('Your car is wrecked!');
-          }
-        } else {
-          player.damage(12, game);
-        }
+      car.replan = (car.replan ?? 0) - dt;
+      if (!car.route || car.replan <= 0 || car.routeIndex >= car.route.length) {
+        car.route = roadRoute(game.city, car.x, car.y, px, py);
+        car.routeIndex = 0;
+        car.replan = 1.4;
       }
-      // A patrol car stuck against a wall reverses out instead of pushing forever.
-      if (Math.abs(v.speed) < 8 && d > 90) {
-        c.stuck += dt;
-        if (c.stuck > 1.6) {
-          v.update(dt, { throttle: -0.7, steer: -steer, brake: false }, game.tod);
-          if (c.stuck > 2.6) c.stuck = 0;
-        }
+      const wp = car.route[car.routeIndex];
+      if (!wp) {
+        steerNpcCar(car, px, py, dt, game.city, game.cars, cruise);
+      } else if (Math.hypot(wp.x - car.x, wp.y - car.y) < 34) {
+        car.routeIndex += 1;
       } else {
-        c.stuck = 0;
+        steerNpcCar(car, wp.x, wp.y, dt, game.city, game.cars, cruise);
       }
     }
-
-    // Officers on foot chase Mara and hold her to make the arrest.
-    for (const o of this.officers) {
-      const d = dist(o.x, o.y, pp.x, pp.y);
-      if (player.onFoot) {
-        const a = Math.atan2(pp.y - o.y, pp.x - o.x);
-        o.x += Math.cos(a) * o.speed * dt;
-        o.y += Math.sin(a) * o.speed * dt;
-        if (d < 28) {
-          o.arrest += dt;
-          if (o.arrest > 1.2) {
-            game.busted();
-            return;
-          }
-        } else {
-          o.arrest = Math.max(0, o.arrest - dt);
-        }
-      } else if (d > 700) {
-        o.x = pp.x + 500;
-        o.y = pp.y;
-      }
+    // Ram: if she is in a car and slow, a cop beside her starts the bust.
+    const d = Math.hypot(car.x - px, car.y - py);
+    if (game.player.inCar && d < 74 && Math.abs(game.player.inCar.speed) < 10) {
+      game.bustTimer += dt;
+      if (game.bustTimer > 2.5) game.busted = true;
     }
+  }
+  // The bust clock only runs while a cop is actually holding her still.
+  const pressured = game.player.inCar
+    && Math.abs(game.player.inCar.speed) < 10
+    && game.policeCars.some((c) => Math.hypot(c.x - px, c.y - py) < 74);
+  if (!pressured) game.bustTimer = 0;
 
-    // Keep patrol cars from piling onto each other.
-    for (let i = 0; i < this.cars.length; i++) {
-      for (let j = i + 1; j < this.cars.length; j++) {
-        const a = this.cars[i].veh;
-        const b = this.cars[j].veh;
-        const d = dist(a.x, a.y, b.x, b.y);
-        if (d > 0.01 && d < 52) {
-          const push = (52 - d) / 2;
-          const ang = Math.atan2(b.y - a.y, b.x - a.x);
-          a.x -= Math.cos(ang) * push;
-          a.y -= Math.sin(ang) * push;
-          b.x += Math.cos(ang) * push;
-          b.y += Math.sin(ang) * push;
-        }
+  // Foot cops run her down on foot; one beside her long enough busts her.
+  for (const cop of game.footCops) {
+    if (game.player.inCar) {
+      // A foot cop cannot catch a car: jog to the nearest road and wait.
+      const d = Math.hypot(cop.x - px, cop.y - py);
+      if (d > 700) {
+        const spot = randomRoadPoint(game.rng, px, py, 380);
+        cop.x = spot.x;
+        cop.y = spot.y;
       }
+      continue;
     }
-
-    game.audio.setSiren(this.stars > 0 && nearest < 700);
+    const d = Math.hypot(px - cop.x, py - cop.y);
+    cop.angle = Math.atan2(py - cop.y, px - cop.x);
+    cop.phase += dt * 10;
+    if (d > 8) {
+      cop.x += Math.cos(cop.angle) * cop.speed * dt;
+      cop.y += Math.sin(cop.angle) * cop.speed * dt;
+    }
+    if (d < 30) {
+      cop.bustTimer += dt;
+      if (cop.bustTimer > 1.2) game.busted = true;
+    } else {
+      cop.bustTimer = 0;
+    }
   }
 
-  draw(ctx, tod) {
-    for (const c of this.cars) c.veh.draw(ctx, tod);
-    for (const o of this.officers) {
-      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  game.sirenOn = game.policeCars.length > 0 || game.footCops.length > 0;
+}
+
+/** Draw the foot cops: navy uniform, cap, and a reach-out arm when close. */export function drawFootCops(ctx, game) {
+  for (const cop of game.footCops) {
+    ctx.save();
+    ctx.translate(cop.x, cop.y);
+    const bob = Math.sin(cop.phase) * 1.5;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(0, 8, 11, 4.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.rotate(cop.angle);
+    ctx.fillStyle = '#1f3a6e';
+    ctx.beginPath();
+    ctx.arc(0, bob * 0.3, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#f2c9a0';
+    ctx.beginPath();
+    ctx.arc(4, 0, 5.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#16294d';
+    ctx.fillRect(-2, -7, 8, 14);
+    ctx.restore();
+    // Bust progress ring while a cop is grabbing her.
+    if (cop.bustTimer > 0) {
+      ctx.save();
+      ctx.strokeStyle = '#ff4040';
+      ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.ellipse(o.x + 1, o.y + 3, 8, 5, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#2e4a7a';
-      ctx.beginPath();
-      ctx.arc(o.x, o.y, 9, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#d8e2f2';
-      ctx.beginPath();
-      ctx.arc(o.x, o.y - 2, 4, 0, Math.PI * 2);
-      ctx.fill();
-      if (o.arrest > 0) {
-        ctx.strokeStyle = '#ffd23e';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(o.x, o.y, 15, -Math.PI / 2, -Math.PI / 2 + (o.arrest / 1.2) * Math.PI * 2);
-        ctx.stroke();
-      }
+      ctx.arc(cop.x, cop.y, 22, -Math.PI / 2, -Math.PI / 2 + (cop.bustTimer / 1.2) * Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
     }
   }
 }

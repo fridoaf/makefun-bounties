@@ -1,74 +1,43 @@
-// Solara Bay — save / load through localStorage.
-// A save is browser state, never a file in the repo.
+// Save and load, in the browser's localStorage only. The save holds Mara's
+// money, which jobs are done, which packages she found, the clock, and where
+// she was standing — never the world itself, which rebuilds from its seed.
 
-import { CFG } from './config.js';
-import { PACKAGES } from './missions.js';
-
-export function hasSave() {
-  try {
-    return !!localStorage.getItem(CFG.SAVE_KEY);
-  } catch {
-    return false;
-  }
-}
+import { SAVE_KEY } from './config.js';
 
 export function saveGame(game) {
   try {
     const data = {
-      money: game.player.money,
-      hp: game.player.hp,
-      x: game.player.x,
-      y: game.player.y,
-      missionIdx: game.missions.idx,
-      missionStep: game.missions.step,
+      cash: Math.floor(game.cash),
+      hp: Math.round(game.player.hp),
+      x: Math.round(game.player.x),
+      y: Math.round(game.player.y),
+      clockMin: Math.floor(game.clockMin),
+      missionsDone: game.missions.done,
+      packagesTaken: game.missions.packages.map((p) => p.taken),
       storyDone: game.missions.storyDone,
-      packagesFound: game.missions.packagesFound,
-      packagesTaken: PACKAGES.map((p) => p.taken),
-      tod: game.tod,
-      savedAt: Date.now(),
     };
-    localStorage.setItem(CFG.SAVE_KEY, JSON.stringify(data));
-    return true;
+    window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch {
-    return false;
+    // Private windows and full storage: the save just does not stick.
   }
 }
 
-export function loadGame() {
+export function loadSave() {
   try {
-    const raw = localStorage.getItem(CFG.SAVE_KEY);
+    const raw = window.localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw);
+    const data = JSON.parse(raw);
+    if (typeof data.cash !== 'number' || !Array.isArray(data.missionsDone)) return null;
+    return data;
   } catch {
     return null;
   }
 }
 
-export function applySave(game, data) {
-  if (!data) return false;
-  game.player.money = data.money || 0;
-  game.player.hp = data.hp || CFG.PLAYER_HP;
-  game.player.x = data.x || CFG.START_X;
-  game.player.y = data.y || CFG.START_Y;
-  game.missions.idx = data.missionIdx || 0;
-  game.missions.step = data.missionStep || 0;
-  game.missions.storyDone = !!data.storyDone;
-  game.missions.packagesFound = data.packagesFound || 0;
-  if (Array.isArray(data.packagesTaken)) {
-    data.packagesTaken.forEach((taken, i) => {
-      if (PACKAGES[i]) PACKAGES[i].taken = !!taken;
-    });
-  }
-  game.tod = typeof data.tod === 'number' ? data.tod : 0.3;
-  game.missions.active = false;
-  game.missions.fightSpawned = false;
-  return true;
-}
-
 export function clearSave() {
   try {
-    localStorage.removeItem(CFG.SAVE_KEY);
+    window.localStorage.removeItem(SAVE_KEY);
   } catch {
-    // ignore
+    // Nothing to clear.
   }
 }
